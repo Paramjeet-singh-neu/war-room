@@ -80,6 +80,9 @@
   .node.idle { opacity: .85; }
   .node.investigating { border-color: var(--accent); animation: pulse 1.1s ease-in-out infinite; }
   .node.done { border-color: #2b6f5a; }
+  .node.adj { border-color: var(--gold); box-shadow: 0 0 22px #ffd16633; animation: spawnIn .4s ease-out; }
+  .node.adj .ic { background: #221c08; }
+  @keyframes spawnIn { from { opacity: 0; transform: scale(.7); } to { opacity: 1; transform: scale(1); } }
   .node.commander { width: 250px; border-color: #2a3a52; }
   .node.commander.working { border-color: var(--gold); animation: pulseGold 1s ease-in-out infinite; }
   .node.commander.solved { border-color: var(--ok); background: linear-gradient(180deg, #0f2a20, #0b1f18);
@@ -130,13 +133,14 @@ const META = {
   metrics: { name: "Metrics Agent", role: "latency · error rate · CPU", ic: "📈", x: 700, y: 40 },
   deploys: { name: "Deploys Agent", role: "deploys · config · merges",  ic: "🚀", x: 380, y: 470 },
   commander:{ name: "Incident Commander", role: "correlate · rank · adjudicate", ic: "🛰️", x: 380, y: 220 },
+  adjudicator:{ name: "Adjudicator", role: "spawned on conflict · round 2", ic: "⚖️", x: 730, y: 360 },
 };
 
 function InvestigatorNode({ data }) {
   const m = META[data.source];
   const f = data.finding;
   return html`
-    <div class=${"node " + data.phase}>
+    <div class=${"node " + data.phase + (data.source === "adjudicator" ? " adj" : "")}>
       <${Handle} type="target" position=${Position.Top} style=${{ opacity: 0 }} />
       <div class="top">
         <div class="ic">${m.ic}</div>
@@ -223,6 +227,20 @@ function App() {
     setEdges(es => es.map(e => e.id === id ? { ...e, ...patch, style: { ...e.style, ...(patch.style || {}) } } : e));
   }, [setEdges]);
 
+  // Highlight the edges of whichever sources converge on the top hypothesis
+  // (works for both round-1 correlate and round-2 recorrelate; adjudicator included).
+  const applyCorrelation = useCallback((ev) => {
+    const conv = new Set((ev.ranked[0] && ev.ranked[0].converging_sources) || []);
+    ["logs", "metrics", "deploys", "adjudicator"].forEach(s => {
+      const on = conv.has(s);
+      patchEdge("e-" + s, {
+        animated: on, label: on ? "correlates" : undefined,
+        labelStyle: { fill: "#ffd166", fontSize: 10 },
+        style: { stroke: on ? "#ffd166" : "#243245", strokeWidth: on ? 3 : 1.5 },
+      });
+    });
+  }, [patchEdge]);
+
   function handle(ev) {
     switch (ev.type) {
       case "incident":
@@ -242,21 +260,35 @@ function App() {
         break;
       case "correlate": {
         patchNode("commander", { phase: "working", statusLabel: "correlating" });
-        const conv = new Set((ev.ranked[0] && ev.ranked[0].converging_sources) || []);
-        ["logs", "metrics", "deploys"].forEach(s => {
-          const on = conv.has(s);
-          patchEdge("e-" + s, {
-            animated: on, label: on ? "correlates" : undefined,
-            labelStyle: { fill: "#ffd166", fontSize: 10 },
-            style: { stroke: on ? "#ffd166" : "#243245", strokeWidth: on ? 3 : 1.5 },
-          });
-        });
+        applyCorrelation(ev);
+        break;
+      }
+      case "adjudicate_start": {
+        // Dynamic second round: spawn the adjudicator node + edge live.
+        patchNode("commander", { phase: "working", statusLabel: "round 2 · adjudicating" });
+        setNodes(ns => ns.concat([{
+          id: "adjudicator", type: "investigator",
+          position: { x: META.adjudicator.x, y: META.adjudicator.y },
+          data: { source: "adjudicator", phase: "investigating", statusLabel: "spawned",
+                  finding: null, top: null }, draggable: true,
+        }]));
+        setEdges(es => es.concat([{
+          id: "e-adjudicator", source: "commander", target: "adjudicator",
+          animated: true, label: "round 2", labelStyle: { fill: "#ffd166", fontSize: 10 },
+          style: { stroke: "#ffd166", strokeWidth: 2.5, strokeDasharray: "5 3" },
+        }]));
+        setAlert("Round 2 — verdict contested; Commander spawned an Adjudicator to resolve: " + ev.question);
+        break;
+      }
+      case "recorrelate": {
+        patchNode("commander", { phase: "working", statusLabel: "re-correlating" });
+        applyCorrelation(ev);
         break;
       }
       case "hypothesis": {
         const top = ev.report.ranked[0];
         patchNode("commander", { phase: "solved", statusLabel: "root cause", top });
-        ["logs", "metrics", "deploys"].forEach(s => {
+        ["logs", "metrics", "deploys", "adjudicator"].forEach(s => {
           if ((top.converging_sources || []).includes(s))
             patchEdge("e-" + s, { style: { stroke: "#36d399", strokeWidth: 3 } });
         });

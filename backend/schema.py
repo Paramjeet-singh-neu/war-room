@@ -16,7 +16,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-Source = Literal["logs", "metrics", "deploys"]
+# The three standing investigators, plus "adjudicator" — a one-off specialist the
+# Commander spawns in a dynamic second round to resolve a contested hypothesis.
+Source = Literal["logs", "metrics", "deploys", "adjudicator"]
 Severity = Literal["low", "medium", "high", "critical"]
 
 

@@ -74,6 +74,24 @@ The three investigators run with `asyncio.gather` in
 t=0.0s and total runtime equals the *slowest* agent, not the sum. Sequential
 execution would defeat the entire point.
 
+### Dynamic second round — the Commander adapts, it doesn't just fan out once
+After round-1 correlation the Commander checks whether the verdict is **contested**
+(the top two hypotheses are different causes that are close in score, or the top isn't
+a high-confidence call — `_contested` in the orchestrator). If so, it **spawns a one-off
+`adjudicator` specialist** (`investigate_specialist`) that deep-dives the leading cause
+against the dissent, returns its own structured `Finding`, and the Commander
+**re-correlates** with the new evidence. When round 1 is already clear, this is skipped —
+the fixed single fan-out remains the default.
+
+This makes the orchestration *adaptive*: e.g. in `db-vs-deploy`, Logs+Metrics see a
+`db-connection-pool` symptom while Deploys sees `deploy-4480`; the Commander detects the
+contest, spawns the adjudicator (a **5th node that appears live in the graph**), which
+confirms the pool exhaustion is downstream of the deploy's `HikariCP 20→5` change — and
+the verdict resolves decisively to `deploy-4480`. The whole dynamic tree is Weave-traced.
+Verified reliable: db-vs-deploy adjudicates 6/6, payments stays single-round 4/4.
+
+![Dynamic second round — the spawned Adjudicator](docs/dynamic.png)
+
 ### Programmatic correlation (not text concatenation)
 [`backend/correlation.py`](backend/correlation.py) ranks candidate causes purely from
 the structured fields:
@@ -234,8 +252,8 @@ the two models, and tracing status at a glance.
 ```
 backend/
   app.py            FastAPI: serves the UI, streams orchestration via SSE
-  orchestrator.py   Incident Commander — asyncio.gather fan-out + synthesis
-  agents.py         the three investigators (A2A Task in, Finding out)
+  orchestrator.py   Incident Commander — parallel fan-out + dynamic adjudication round
+  agents.py         the three investigators + the spawned adjudicator specialist
   correlation.py    programmatic hypothesis ranking (convergence + alignment)
   schema.py         locked Task / Finding / Hypothesis models
   tools.py          MCP-framed data sources (logs/metrics/deploys)

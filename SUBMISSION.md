@@ -57,6 +57,11 @@ is downstream of the change).
 - **Real async parallelism** — the three investigators run under `asyncio.gather`
   (`backend/orchestrator.py`); verified all three start at t=0 and total runtime equals
   the slowest agent, not the sum. Sequential execution would defeat the whole point.
+- **Dynamic, adaptive orchestration** — not a fixed single fan-out: when the round-1
+  verdict is *contested*, the Commander **spawns a one-off `adjudicator` specialist** that
+  deep-dives the conflict and returns its own finding, then **re-correlates** (a 5th node
+  appears live in the graph). When round 1 is clear, it's skipped. Verified reliable:
+  db-vs-deploy adjudicates 6/6, payments stays single-round 4/4.
 - **Programmatic correlation, not text concatenation** — `backend/correlation.py` ranks
   candidate causes from the structured fields: cause-convergence, timestamp alignment,
   and a **causal-precedence** rule (a plausible change that *preceded* the incident
@@ -106,8 +111,11 @@ is downstream of the change).
    edges fire **at once** (real parallelism), each agent returns a structured finding,
    the Commander turns **green**: *"Root cause: deploy-4471 → roll back. Confidence:
    critical."*
-3. **(0:55–1:20) Disagreement:** switch to **db-vs-deploy** → trigger → Logs blames the
-   DB, Deploys+Metrics blame the deploy, **Commander adjudicates** to the deploy.
+3. **(0:55–1:25) Dynamic adjudication (the orchestration money-shot):** switch to
+   **db-vs-deploy** → trigger. Logs+Metrics see a DB-pool symptom, Deploys sees the deploy
+   → the Commander flags the conflict and **spawns a 5th Adjudicator node live**, which
+   deep-dives and resolves it to `deploy-4480` (the pool change). Say: *"the crew doesn't
+   just fan out once — when it's unsure it adapts and spins up a specialist."*
 4. **(1:20–1:50) Weave (the differentiator):** cut to the **Weave trace tree** (parallel
    fan-out, per-model spans) → cut to the **Evals leaderboard** showing **67% → 100%**.
    Say: *"We used Weave to debug our debugger and hill-climb it on an adversarial set."*

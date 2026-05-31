@@ -18,7 +18,7 @@ from typing import Awaitable, Callable
 
 import weave
 
-from backend.agents import investigate
+from backend.agents import investigate, investigate_specialist
 from backend.correlation import detect_disagreement, rank_hypotheses
 from backend.llm import chat_text, commander_model, have_llm
 from backend.schema import CommanderReport, Finding, Hypothesis, Source
@@ -27,6 +27,21 @@ from backend.tools import IncidentDataSource
 Emit = Callable[[dict], Awaitable[None]]
 
 INVESTIGATORS: list[Source] = ["logs", "metrics", "deploys"]
+
+# A round-1 verdict is "contested" (worth a dynamic second round) when the top two
+# hypotheses are different causes and either close in score or the top isn't a
+# high/critical-confidence call. The causal-precedence rule can rank a change above a
+# higher-scoring symptom, which shows up here as a small/negative gap -> contested.
+_CONTEST_MARGIN = 1.5
+
+
+def _contested(ranked: list[Hypothesis]) -> tuple[Hypothesis, Hypothesis] | None:
+    if len(ranked) < 2 or ranked[0].cause == ranked[1].cause:
+        return None
+    top, second = ranked[0], ranked[1]
+    if (top.score - second.score) < _CONTEST_MARGIN or top.confidence in ("low", "medium"):
+        return top, second
+    return None
 
 # Small staggered pacing so the "fire together, resolve at different times"
 # beat is visible in the graph even in mock mode. Tunable / disable-able.
@@ -48,23 +63,30 @@ async def commander_synthesize(
     incident_start: str,
     ranked: list[Hypothesis],
     disagreement: dict | None,
+    adjudicated: bool = False,
 ) -> tuple[str, str | None]:
-    """Write narrative + adjudication on top of the programmatic ranking."""
+    """Write narrative + adjudication on top of the programmatic ranking.
+
+    `adjudicated` is True when a dynamic second round (the adjudicator specialist) was
+    run to resolve a contested verdict — the narrative credits it.
+    """
     top = ranked[0]
     if not have_llm():
         srcs = ", ".join(top.converging_sources)
         narrative = (
             f"Top hypothesis: {top.cause}. Converging sources: {srcs} "
-            f"({len(top.converging_sources)} of 3), with timestamps aligned to the "
+            f"({len(top.converging_sources)}), with timestamps aligned to the "
             f"incident start at {incident_start}. Suggested action: {top.suggested_action} "
             f"Aggregate confidence: {top.confidence}."
         )
         adjudication = None
         if disagreement:
+            lead = ("Round 1 was contested, so I spawned an adjudicator to deep-dive it. "
+                    if adjudicated else "Sources disagreed on the cause. ")
             adjudication = (
-                "Sources disagreed on the cause. Adjudication: the change "
-                f"({top.cause}) immediately precedes the symptoms and explains them as a "
-                "downstream effect, so it outranks the symptom-level hypotheses."
+                lead + f"Adjudication: the change ({top.cause}) precedes the symptoms and "
+                "explains them as a downstream effect, so it outranks the symptom-level "
+                "hypotheses."
             )
         return narrative, adjudication
 
@@ -86,9 +108,12 @@ async def commander_synthesize(
     adjudication = None
     if disagreement:
         adj_system = (
-            "Two investigators disagreed on the root cause. Briefly adjudicate (2 "
-            "sentences): explain why the winning hypothesis outranks the other, using "
-            "the timing (which event preceded which) and cause-vs-symptom reasoning."
+            "Investigators disagreed on the root cause" + (
+                ", so a dynamic second-round ADJUDICATOR specialist was spawned to resolve it. "
+                if adjudicated else ". ") +
+            "Briefly adjudicate (2 sentences): explain why the winning hypothesis outranks "
+            "the other, using the timing (which event preceded which) and cause-vs-symptom "
+            "reasoning" + (" and the adjudicator's finding" if adjudicated else "") + "."
         )
         adj_user = (
             f"Disagreement (cause -> sources): {disagreement}\n"
@@ -134,7 +159,40 @@ async def run_incident(scenario: dict, emit: Emit) -> CommanderReport:
         }
     )
 
-    narrative, adjudication = await commander_synthesize(incident_start, ranked, disagreement)
+    # Dynamic second round: if the verdict is contested, the Commander spawns a one-off
+    # adjudicator specialist to deep-dive the conflict, then RE-correlates. (When the
+    # round-1 verdict is clear, this is skipped — the fixed single fan-out is the default.)
+    contest = _contested(ranked)
+    adjudicated = False
+    if contest is not None:
+        top, second = contest
+        await emit(
+            {
+                "type": "adjudicate_start",
+                "leading": top.cause,
+                "dissent": second.cause,
+                "question": f"Does '{top.cause}' explain '{second.cause}', or are they independent?",
+            }
+        )
+        adj = await investigate_specialist(
+            top.cause, second.cause, top.converging_sources, second.converging_sources, scenario, ds
+        )
+        findings.append(adj)
+        await emit({"type": "finding", "source": "adjudicator", "finding": adj.model_dump(), "round": 2})
+        ranked = rank_hypotheses(findings, incident_start)
+        disagreement = detect_disagreement(findings)
+        adjudicated = True
+        await emit(
+            {
+                "type": "recorrelate",
+                "ranked": [h.model_dump() for h in ranked],
+                "top_cause": ranked[0].cause,
+            }
+        )
+
+    narrative, adjudication = await commander_synthesize(
+        incident_start, ranked, disagreement, adjudicated
+    )
     report = CommanderReport(
         incident_id=scenario["id"],
         incident_start=incident_start,

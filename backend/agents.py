@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import weave
 
-from backend.llm import have_llm, investigator_model, parse_finding
+from backend.llm import commander_model, have_llm, investigator_model, parse_finding
 from backend.schema import Finding, Source, Task
 from backend.tools import IncidentDataSource
 
@@ -125,3 +125,58 @@ async def investigate(source: Source, scenario: dict, datasource: IncidentDataSo
     if have_llm():
         return await _llm_finding(source, scenario, raw)
     return _mock_finding(source, scenario)
+
+
+_ADJUDICATOR_ROLE = (
+    "You are an Adjudicator — a focused specialist the Incident Commander spins up "
+    "ONLY when round-1 investigators disagree. Round 1 surfaced two competing causes. "
+    "Your job: decide the TRUE root cause vs the downstream symptom. A change (deploy/"
+    "config) that PRECEDED the incident and whose diff plausibly produces the observed "
+    "symptom is the root cause; the symptom is its effect. If the change is unrelated "
+    "(copy/UI/logging) or post-dates onset, the other hypothesis stands. Examine the "
+    "evidence below and return ONE Finding whose `points_to` is the true root cause."
+)
+
+
+@weave.op()
+async def investigate_specialist(
+    leading: str,
+    dissent: str,
+    leading_sources: list[str],
+    dissent_sources: list[str],
+    scenario: dict,
+    datasource: IncidentDataSource,
+) -> Finding:
+    """Dynamic second-round adjudicator: resolve a contested round-1 hypothesis."""
+    # The adjudicator deep-dives the change/deploy evidence to test causality.
+    deploys = datasource.fetch("deploys", scenario["window_start"], scenario["window_end"])
+    if not have_llm():
+        # Deterministic: a plausible preceding change wins; symptom is downstream.
+        root = leading if _looks_like_change(leading) else dissent
+        symptom = dissent if root == leading else leading
+        return Finding(
+            source="adjudicator",
+            finding=(f"Deep-dive: {root} is the root cause; '{symptom}' is a downstream "
+                     f"symptom it explains. Conflict resolved in favor of {root}."),
+            timestamp=scenario["incident_start"],
+            severity="high",
+            confidence=0.9,
+            points_to=root,
+        )
+
+    system = _ADJUDICATOR_ROLE + "\n\n" + _SCHEMA_SPEC.replace("{SOURCE}", "adjudicator")
+    user = (
+        f"Incident: {scenario['title']} (onset ~{scenario['incident_start']}).\n"
+        f"Hypothesis A: '{leading}' (from {leading_sources}).\n"
+        f"Hypothesis B: '{dissent}' (from {dissent_sources}).\n\n"
+        f"--- CHANGE/DEPLOY EVIDENCE ---\n{deploys}\n--- END ---\n\n"
+        "Decide the true root cause and return one Finding as JSON. Set `points_to` to "
+        "the root cause (prefer the change if it plausibly explains the symptom)."
+    )
+    finding = await parse_finding(commander_model(), system, user, Finding)
+    finding.source = "adjudicator"
+    return finding
+
+
+def _looks_like_change(cause: str) -> bool:
+    return cause.startswith(("deploy-", "config-", "pr-", "release-"))

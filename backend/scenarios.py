@@ -128,11 +128,11 @@ recent changes (orders-service), most recent first:
         ),
         Finding(
             source="metrics",
-            finding="p99 latency 340ms -> 4800ms at 14:32; db_active_conns pinned at pool max (5) with 5000ms waits. DB host CPU/mem normal — the pool ceiling is the constraint, and it stepped right after the 14:30 deploy marker.",
+            finding="p99 latency 340ms -> 4800ms at 14:32; db_active_conns pinned at pool max (5) with 5000ms waits. DB host CPU/mem normal — the connection pool ceiling is the constraint.",
             timestamp="2024-11-12T14:32:00Z",
             severity="critical",
             confidence=0.78,
-            points_to="deploy-4480",
+            points_to="db-connection-pool",
         ),
         Finding(
             source="deploys",

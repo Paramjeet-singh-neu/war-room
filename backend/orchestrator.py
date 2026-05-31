@@ -20,7 +20,7 @@ import weave
 
 from backend.agents import investigate
 from backend.correlation import detect_disagreement, rank_hypotheses
-from backend.llm import COMMANDER_MODEL, chat_text, have_openai
+from backend.llm import chat_text, commander_model, have_llm
 from backend.schema import CommanderReport, Finding, Hypothesis, Source
 from backend.tools import IncidentDataSource
 
@@ -51,7 +51,7 @@ async def commander_synthesize(
 ) -> tuple[str, str | None]:
     """Write narrative + adjudication on top of the programmatic ranking."""
     top = ranked[0]
-    if not have_openai():
+    if not have_llm():
         srcs = ", ".join(top.converging_sources)
         narrative = (
             f"Top hypothesis: {top.cause}. Converging sources: {srcs} "
@@ -81,7 +81,7 @@ async def commander_synthesize(
         "and the suggested action. Be concrete and calm — this is a 3am page."
     )
     user = f"Incident start: {incident_start}\nRanked hypotheses:\n{ranked_lines}"
-    narrative = await chat_text(COMMANDER_MODEL, system, user)
+    narrative = await chat_text(commander_model(), system, user)
 
     adjudication = None
     if disagreement:
@@ -95,7 +95,7 @@ async def commander_synthesize(
             f"Winning hypothesis: {ranked[0].cause}\n"
             f"Runner-up: {ranked[1].cause if len(ranked) > 1 else 'n/a'}"
         )
-        adjudication = await chat_text(COMMANDER_MODEL, adj_system, adj_user)
+        adjudication = await chat_text(commander_model(), adj_system, adj_user)
 
     return narrative, adjudication
 

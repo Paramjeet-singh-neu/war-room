@@ -101,32 +101,57 @@ it never produces the ranking. This is what reads as sound architecture in Q&A.
 
 ## Sponsor tools — every tool, and how
 
-### Weights & Biases **Weave** (observability) — *"debugging the debugger"*
+Three layers of Weights & Biases usage in one product:
+
+### 1. W&B **Inference Service** (multi-model)
+All four agents run on **W&B-hosted open models** via the OpenAI-compatible endpoint
+(`https://api.inference.wandb.ai/v1`) — see [`backend/llm.py`](backend/llm.py). We
+route by job:
+- **Investigators** (Logs / Metrics / Deploys) → `meta-llama/Llama-3.3-70B-Instruct`
+  — fast, capable, great for the parallel structured-output fan-out.
+- **Incident Commander** → `deepseek-ai/DeepSeek-R1-0528` — a reasoning model for the
+  synthesis/adjudication step. *We route the hard reasoning to R1 and the parallel
+  investigation to Llama.* Both models report usage via the required `team/project`.
+
+### 2. W&B **Weave** (tracing) — *"debugging the debugger"*
 We use Weave to **trace and debug a crew whose entire job is debugging production
-incidents — observability all the way down.** Weave is wired in at commit #1, before
-any agent logic:
-
-- `weave.init("war-room")` in [`backend/weave_setup.py`](backend/weave_setup.py).
-- **Every** agent op is decorated with `@weave.op()`: each investigator
-  (`investigate`), each MCP tool fetch (`fetch_logs`/`fetch_metrics`/`fetch_deploys`),
-  the structured-output LLM calls (`parse_finding`, `chat_text`), the Commander
-  synthesis (`commander_synthesize`), and the top-level `run_incident`.
+incidents — observability all the way down.** Wired in at commit #1, before any agent
+logic:
+- `weave.init(WANDB_PROJECT)` in [`backend/weave_setup.py`](backend/weave_setup.py).
+- **Every** agent op is `@weave.op()`: each investigator (`investigate`), each MCP
+  tool fetch (`fetch_logs`/`fetch_metrics`/`fetch_deploys`), the LLM calls
+  (`parse_finding`, `chat_text`), the Commander synthesis (`commander_synthesize`),
+  and the top-level `run_incident`.
 - Result: one Weave trace tree per incident showing the parallel fan-out, every
-  agent's inputs/outputs (raw slice → structured finding), and the Commander's
-  correlation — exactly the view you want when *the crew itself* misbehaves.
+  agent's inputs/outputs (raw slice → structured finding), **which model handled
+  what**, and the Commander's correlation — exactly the view you want when *the crew
+  itself* misbehaves.
+- Offline-tolerant: with no W&B login it runs untraced (decorators stay active)
+  instead of blocking on a key prompt.
 
-The setup is **offline-tolerant**: if there's no W&B login it runs untraced (decorators
-stay active) instead of blocking on a key prompt. Run `wandb login` (or set
-`WANDB_API_KEY`) and restart to log traces.
+### 3. W&B **Weave Evaluations** (measured, not just logged)
+[`backend/eval.py`](backend/eval.py) runs a `weave.Evaluation` over a **held-out set
+of 5 incidents with known root causes** (deploy / config / memory-leak / cache /
+expired-TLS-cert — deliberately varied so the crew can't win by "always blame the
+latest deploy"). The scorer reports **top-1 accuracy**, whether the truth appears in
+the ranking, its rank, and **MRR** — so we can iterate on agent prompts/models against
+a real metric and compare runs on a Weave leaderboard.
 
-### OpenAI
-`gpt-4o-mini` for the three investigators (fast/cheap), `gpt-4o` for the Commander
-(synthesis + adjudication). See [`backend/llm.py`](backend/llm.py).
+```bash
+.venv/bin/python -m backend.eval      # logs an Evaluation to your Weave project's Evals tab
+```
+
+> Pitch: *"We don't just trace War Room with Weave — we evaluate root-cause accuracy
+> on a held-out incident set. The crew that debugs production is itself measurable in
+> production."*
+
+### OpenAI (alternative path)
+If `OPENAI_API_KEY` is set instead of W&B creds, the same code runs on `gpt-4o-mini`
+(investigators) / `gpt-4o` (Commander).
 
 ### LangChain
-Not used. We deliberately chose plain async OpenAI function-/structured-output calls
-to keep the harness legible and avoid an unfamiliar framework under time pressure;
-the A2A/MCP contracts are explicit in our own schema rather than hidden in a framework.
+Not used — deliberately. Plain async OpenAI-compatible calls keep the harness legible;
+the A2A/MCP contracts live in our own schema rather than hidden in a framework.
 
 ---
 
@@ -138,15 +163,19 @@ the A2A/MCP contracts are explicit in our own schema rather than hidden in a fra
 ```
 
 **Runs with zero keys** in deterministic *mock mode* (great for a bulletproof demo).
-To go fully live:
+To go fully live on W&B (recommended):
 
 ```bash
-cp .env.example .env     # add OPENAI_API_KEY  (real LLM reasoning + live paste)
-wandb login              # (or set WANDB_API_KEY) to log Weave traces
+cp .env.example .env
+# set in .env:
+#   WANDB_API_KEY=<from https://wandb.ai/authorize>
+#   WANDB_PROJECT=<team>/<project>     # e.g. paramjeet/war-room  (REQUIRED, team/project)
+./run.sh
 ```
 
-The header chips show whether you're on **GPT-4o live / mock LLM** and **Weave
-tracing / off** at a glance.
+That single pair of env vars turns on **both** the W&B Inference Service (agents run
+on W&B-hosted models) **and** Weave tracing. The header chips show the live provider,
+the two models, and tracing status at a glance.
 
 > Note: in mock mode the investigators return curated findings, so pasting *new*
 > raw data won't change the verdict. With `OPENAI_API_KEY` set, the agents reason
@@ -180,9 +209,10 @@ backend/
   correlation.py    programmatic hypothesis ranking (convergence + alignment)
   schema.py         locked Task / Finding / Hypothesis models
   tools.py          MCP-framed data sources (logs/metrics/deploys)
-  llm.py            async OpenAI layer (Weave-instrumented) + mock fallback
-  weave_setup.py    offline-tolerant weave.init
-  scenarios.py      two engineered incident scenarios
+  llm.py            W&B Inference Service / OpenAI layer (Weave-instrumented) + mock
+  weave_setup.py    offline-tolerant weave.init (uses WANDB_PROJECT)
+  eval.py           weave.Evaluation — root-cause accuracy on 5 held-out incidents
+  scenarios.py      5 engineered incidents (2 demo + 3 eval), with ground truth
 frontend/
   index.html        live React Flow graph (loaded via ESM CDN — no build step)
 ```

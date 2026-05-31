@@ -21,7 +21,7 @@ from fastapi import FastAPI, HTTPException  # noqa: E402
 from fastapi.responses import FileResponse, StreamingResponse  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
-from backend.llm import have_openai  # noqa: E402
+from backend.llm import commander_model, have_llm, investigator_model, provider  # noqa: E402
 from backend.orchestrator import run_incident  # noqa: E402
 from backend.scenarios import DEFAULT_SCENARIO, SCENARIOS  # noqa: E402
 from backend.weave_setup import init_weave  # noqa: E402
@@ -47,7 +47,13 @@ async def index():
 
 @app.get("/api/status")
 async def status():
-    return {"traced": TRACED, "llm": have_openai()}
+    return {
+        "traced": TRACED,
+        "llm": have_llm(),
+        "provider": provider(),
+        "investigator_model": investigator_model(),
+        "commander_model": commander_model(),
+    }
 
 
 @app.get("/api/scenarios")

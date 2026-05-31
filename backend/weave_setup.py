@@ -49,8 +49,12 @@ def init_weave() -> bool:
         )
         return False
     try:
-        entity = os.environ.get("WANDB_ENTITY")
-        project = f"{entity}/{PROJECT}" if entity else PROJECT
+        # Prefer the explicit team/project the user created (required by the
+        # W&B Inference Service for usage tracking); else compose from entity.
+        project = os.environ.get("WANDB_PROJECT")
+        if not project:
+            entity = os.environ.get("WANDB_ENTITY")
+            project = f"{entity}/{PROJECT}" if entity else PROJECT
         weave.init(project)
         _initialized = True
         print(f"[weave] Initialized — tracing every agent op to project '{project}'.")

@@ -118,6 +118,13 @@ import ReactFlow, { Background, Controls, Handle, Position, useNodesState, useEd
 
 const html = htm.bind(React.createElement);
 
+// "meta-llama/Llama-3.3-70B-Instruct" -> "Llama-3.3-70B"; "deepseek-ai/DeepSeek-R1-0528" -> "DeepSeek-R1"
+function shortModel(m) {
+  if (!m) return "";
+  const t = m.split("/").pop();
+  return t.replace(/-Instruct$/, "").replace(/-\d{4,}$/, "");
+}
+
 const META = {
   logs:    { name: "Logs Agent",    role: "error logs · stack traces", ic: "📜", x: 60,  y: 40 },
   metrics: { name: "Metrics Agent", role: "latency · error rate · CPU", ic: "📈", x: 700, y: 40 },
@@ -296,7 +303,13 @@ function App() {
         <div class="logo"><b>WAR</b> ROOM</div>
         <div class="tag">multi-agent incident response</div>
         <div class="chips">
-          <span class=${"chip " + (status.llm ? "on" : "off")}>${status.llm ? "GPT-4o live" : "mock LLM"}</span>
+          <span class=${"chip " + (status.llm ? "on" : "off")}
+                title=${"investigators: " + (status.investigator_model || "—") + " · commander: " + (status.commander_model || "—")}>
+            ${status.provider === "wandb" ? "W&B Inference"
+              : status.provider === "openai" ? "OpenAI live" : "mock LLM"}
+          </span>
+          ${status.llm && status.commander_model && html`<span class="chip on"
+              title="per-agent model mix">${shortModel(status.investigator_model)} + ${shortModel(status.commander_model)}</span>`}
           <span class=${"chip " + (status.traced ? "on" : "off")}>${status.traced ? "Weave tracing" : "Weave off"}</span>
         </div>
       </header>

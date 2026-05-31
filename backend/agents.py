@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import weave
 
-from backend.llm import INVESTIGATOR_MODEL, have_openai, parse_finding
+from backend.llm import have_llm, investigator_model, parse_finding
 from backend.schema import Finding, Source, Task
 from backend.tools import IncidentDataSource
 
@@ -68,17 +68,29 @@ def _mock_finding(source: Source, scenario: dict) -> Finding:
     raise KeyError(f"no mock finding for {source} in scenario {scenario['id']}")
 
 
+_SCHEMA_SPEC = (
+    'Respond with ONLY a single JSON object, no prose, matching exactly:\n'
+    '{\n'
+    f'  "source": "{{SOURCE}}",\n'
+    '  "finding": "specific, concise description of what you observed",\n'
+    '  "timestamp": "ISO-8601 of the key observed event, e.g. 2024-11-12T14:32:05Z",\n'
+    '  "severity": "low | medium | high | critical",\n'
+    '  "confidence": 0.0,   // a number in [0,1]\n'
+    '  "points_to": "short cause id, e.g. deploy-4471 or db-connection-pool"\n'
+    '}'
+)
+
+
 async def _llm_finding(source: Source, scenario: dict, raw: str) -> Finding:
-    system = _ROLE[source] + "\n\n" + _VOCAB_HINT
+    system = _ROLE[source] + "\n\n" + _VOCAB_HINT + "\n\n" + _SCHEMA_SPEC.replace("{SOURCE}", source)
     user = (
         f"Incident window: {scenario['window_start']} .. {scenario['window_end']}\n"
         f"Alert: {scenario['alert']}\n\n"
         f"--- RAW {source.upper()} (your slice only) ---\n{raw}\n"
         f"--- END ---\n\n"
-        "Return one Finding. `timestamp` = ISO-8601 of the key event you observed. "
-        "`confidence` in [0,1]. Be specific and concise in `finding`."
+        "Return one Finding as JSON."
     )
-    finding = await parse_finding(INVESTIGATOR_MODEL, system, user, Finding)
+    finding = await parse_finding(investigator_model(), system, user, Finding)
     finding.source = source  # authoritative; never trust the model for this
     return finding
 
@@ -88,6 +100,6 @@ async def investigate(source: Source, scenario: dict, datasource: IncidentDataSo
     """Run one investigator end-to-end: task -> MCP fetch -> finding."""
     task = _build_task(source, scenario)
     raw = datasource.fetch(source, task.window_start, task.window_end)  # MCP tool call
-    if have_openai():
+    if have_llm():
         return await _llm_finding(source, scenario, raw)
     return _mock_finding(source, scenario)

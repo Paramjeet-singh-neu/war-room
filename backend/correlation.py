@@ -61,50 +61,73 @@ def _suggested_action(cause: str, findings: list[Finding]) -> str:
     return f"Mitigate {cause}: page the owning team and prepare a rollback of the nearest change."
 
 
+_PRECEDENCE_GRACE_S = 120.0  # a change at/just-before onset still counts as preceding
+
+
+def _precedes_incident(group: list[Finding], incident_start: str) -> bool:
+    """Did this change happen at or before the incident onset (within grace)?"""
+    try:
+        start = _parse_ts(incident_start)
+    except ValueError:
+        return False
+    for f in group:
+        try:
+            if (_parse_ts(f.timestamp) - start).total_seconds() <= _PRECEDENCE_GRACE_S:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 def rank_hypotheses(findings: list[Finding], incident_start: str) -> list[Hypothesis]:
-    """Cluster findings by `points_to` and score each candidate cause."""
+    """Cluster findings by `points_to` and rank candidate causes.
+
+    Ranking respects *causal precedence*: a plausible deploy/config change that
+    preceded the incident is the root cause, and symptoms (which several agents
+    naturally observe at once) are its downstream effects — so a qualifying change
+    outranks symptom causes even when fewer agents voted for it. This is safe
+    because the investigators already refuse to blame an implausible change (an
+    email-copy / UI / logging deploy never becomes a candidate here).
+    """
     causes: dict[str, list[Finding]] = {}
     for f in findings:
         causes.setdefault(f.points_to, []).append(f)
 
-    hypotheses: list[Hypothesis] = []
+    ranked: list[tuple[bool, float, Hypothesis]] = []
     for cause, group in causes.items():
         sources = sorted({f.source for f in group})
-        convergence = len(sources)  # distinct sources voting for this cause
-
-        # Alignment: use the tightest-aligned finding in the group.
-        aligns = [_alignment(f.timestamp, incident_start) for f in group]
-        best_align = max(aligns) if aligns else 0.0
-
+        convergence = len(sources)
+        best_align = max((_alignment(f.timestamp, incident_start) for f in group), default=0.0)
         avg_conf = sum(f.confidence for f in group) / len(group)
         max_sev = max(_SEV_WEIGHT[f.severity] for f in group)
-        change_bonus = 1.0 if _is_change(cause) else 0.0
 
-        # Score: convergence dominates, then temporal alignment, then the agents'
-        # own confidence/severity, with a nudge for "this was an actual change".
-        score = (
-            2.0 * convergence
-            + 2.0 * best_align
-            + 1.0 * avg_conf
-            + 1.0 * max_sev
-            + change_bonus
+        score = 2.0 * convergence + 2.0 * best_align + 1.0 * avg_conf + 1.0 * max_sev
+
+        # Root-change candidate: an actual change, confidently reported, that
+        # preceded the incident. These are ranked above symptom causes.
+        is_root_change = (
+            _is_change(cause)
+            and avg_conf >= 0.5
+            and _precedes_incident(group, incident_start)
         )
+        if is_root_change:
+            score += 2.0  # also reflected in the displayed score
 
         summary = "; ".join(f"[{f.source}] {f.finding}" for f in group)
-        hypotheses.append(
-            Hypothesis(
-                cause=cause,
-                summary=summary,
-                suggested_action=_suggested_action(cause, group),
-                confidence=_band(score),
-                score=round(score, 3),
-                converging_sources=sources,
-                aligned_timestamps=[f.timestamp for f in group],
-            )
+        hyp = Hypothesis(
+            cause=cause,
+            summary=summary,
+            suggested_action=_suggested_action(cause, group),
+            confidence=_band(score),
+            score=round(score, 3),
+            converging_sources=sources,
+            aligned_timestamps=[f.timestamp for f in group],
         )
+        ranked.append((is_root_change, score, hyp))
 
-    hypotheses.sort(key=lambda h: h.score, reverse=True)
-    return hypotheses
+    # Sort: qualifying root-changes first, then by score.
+    ranked.sort(key=lambda t: (t[0], t[1]), reverse=True)
+    return [t[2] for t in ranked]
 
 
 def detect_disagreement(findings: list[Finding]) -> dict | None:

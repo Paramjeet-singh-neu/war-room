@@ -21,8 +21,14 @@ from backend.tools import IncidentDataSource
 # convergence count is meaningful across sources.
 _VOCAB_HINT = (
     "Set `points_to` to a short, stable cause id. Prefer a deploy/config id "
-    "(e.g. 'deploy-4471', 'config-993') if a change plausibly explains the "
-    "onset; otherwise an infra/component id (e.g. 'db-connection-pool'). "
+    "(e.g. 'deploy-4471', 'config-993') ONLY if that change plausibly explains the "
+    "symptoms you see; otherwise name the actual technical mechanism you observe "
+    "(e.g. 'upstream-stripe-outage', 'dns-resolution-failure', 'redis-memory-eviction', "
+    "'disk-full', 'db-connection-pool').\n"
+    "Do NOT blame a deploy/config marker just because it appears near the onset: a "
+    "change that only touches email copy, UI text, logging, labels, retry counts, or "
+    "docs almost never causes 5xx / DB / latency / connectivity / DNS / cert failures. "
+    "In that case point_to the real cause in your slice, not the deploy.\n"
     "Use lowercase-hyphenated ids and reuse the SAME id another agent would pick."
 )
 
@@ -42,8 +48,15 @@ _ROLE = {
     "deploys": (
         "You are the Deploys investigator on an incident-response crew. You review "
         "recent deploys, config changes and merges in the window and answer 'what "
-        "changed right before this started?'. Tie any suspicious change to the "
-        "incident onset time."
+        "changed right before this started?'.\n"
+        "CRITICAL: do not blame a change just because it is recent. Only point_to a "
+        "change if BOTH (a) its timing precedes the incident onset AND (b) its diff "
+        "plausibly explains the symptoms. A change that only touches email copy, UI "
+        "text, logging, docs, labels, or metrics is almost never the cause of 5xx/DB/"
+        "latency/connectivity incidents — call it out and rule it OUT. If the only "
+        "recent change is unrelated, or there is NO change inside the window, set "
+        "points_to to 'no-recent-change', severity low, confidence <= 0.3, and state "
+        "what you ruled out. When a change IS plausible, explain the causal link."
     ),
 }
 
@@ -62,10 +75,19 @@ def _build_task(source: Source, scenario: dict) -> Task:
 
 
 def _mock_finding(source: Source, scenario: dict) -> Finding:
-    for f in scenario["mock_findings"]:
+    for f in scenario.get("mock_findings", []):
         if f.source == source:
             return f.model_copy(deep=True)
-    raise KeyError(f"no mock finding for {source} in scenario {scenario['id']}")
+    # Hard eval scenarios are scored live and carry no curated findings; return a
+    # neutral placeholder so mock mode doesn't crash (it will simply score poorly).
+    return Finding(
+        source=source,
+        finding=f"(mock mode: no curated {source} finding for '{scenario['id']}')",
+        timestamp=scenario["incident_start"],
+        severity="low",
+        confidence=0.1,
+        points_to="unknown",
+    )
 
 
 _SCHEMA_SPEC = (

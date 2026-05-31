@@ -17,6 +17,7 @@ under the Evals tab. Without a W&B login it runs a local scored summary instead.
 from __future__ import annotations
 
 import asyncio
+import os
 
 from dotenv import load_dotenv
 
@@ -26,12 +27,20 @@ import weave  # noqa: E402
 
 from backend.agents import investigate  # noqa: E402
 from backend.correlation import rank_hypotheses  # noqa: E402
+from backend.hard_scenarios import HARD_EVAL_SET  # noqa: E402
 from backend.llm import commander_model, investigator_model, provider  # noqa: E402
 from backend.scenarios import EVAL_SET  # noqa: E402
 from backend.tools import IncidentDataSource  # noqa: E402
 from backend.weave_setup import init_weave  # noqa: E402
 
 SOURCES = ["logs", "metrics", "deploys"]
+
+# WARROOM_EVAL selects the dataset: demo (5 curated) | hard (12 ambiguous) | all (17)
+_SETS = {"demo": EVAL_SET, "hard": HARD_EVAL_SET, "all": EVAL_SET + HARD_EVAL_SET}
+
+
+def _eval_set() -> list[dict]:
+    return _SETS.get(os.environ.get("WARROOM_EVAL", "hard"), HARD_EVAL_SET)
 
 
 @weave.op()
@@ -84,7 +93,7 @@ def _rows() -> list[dict]:
             "ground_truth_cause": s["ground_truth_cause"],
             "ground_truth_aliases": s.get("ground_truth_aliases", []),
         }
-        for s in EVAL_SET
+        for s in _eval_set()
     ]
 
 
@@ -94,7 +103,7 @@ async def _run_weave_eval():
         dataset=_rows(),
         scorers=[rca_scorer],
     )
-    print(f"[eval] Running weave.Evaluation over {len(EVAL_SET)} incidents "
+    print(f"[eval] Running weave.Evaluation over {len(_eval_set())} incidents "
           f"(investigators={investigator_model()}, commander={commander_model()})…")
     summary = await evaluation.evaluate(predict)
     print("[eval] Weave summary:", summary)

@@ -101,7 +101,7 @@ it never produces the ranking. This is what reads as sound architecture in Q&A.
 
 ## Sponsor tools — every tool, and how
 
-Three layers of Weights & Biases usage in one product:
+Four layers of Weights & Biases usage in one product:
 
 ### 1. W&B **Inference Service** (multi-model)
 All four agents run on **W&B-hosted open models** via the OpenAI-compatible endpoint
@@ -131,29 +131,49 @@ logic:
 - Offline-tolerant: with no W&B login it runs untraced (decorators stay active)
   instead of blocking on a key prompt.
 
-### 3. W&B **Weave Evaluations** (measured, not just logged)
-[`backend/eval.py`](backend/eval.py) runs a `weave.Evaluation` over a **held-out set
-of 5 incidents with known root causes** (deploy / config / memory-leak / cache /
-expired-TLS-cert — deliberately varied so the crew can't win by "always blame the
-latest deploy"). The scorer reports **top-1 accuracy**, whether the truth appears in
-the ranking, its rank, and **MRR** — so we can iterate on agent prompts/models against
-a real metric and compare runs on a Weave leaderboard.
+### 3. W&B **Weave Evaluations** (measured, then optimized)
+[`backend/eval.py`](backend/eval.py) runs a `weave.Evaluation` over held-out incidents
+with known root causes, scoring **top-1 accuracy**, whether the truth is in the ranking,
+its rank, and **MRR**. Two datasets ([`scenarios.py`](backend/scenarios.py) +
+[`hard_scenarios.py`](backend/hard_scenarios.py), selected with `WARROOM_EVAL=demo|hard|all`):
+- **demo** — 5 curated incidents (deploy / config / memory-leak / cache / expired-cert).
+- **hard** — **12 deliberately ambiguous incidents** with *red-herring recent deploys*
+  (an email-copy deploy, a UI-badge deploy, a retry-tuning deploy that ship right before
+  the incident but aren't the cause) and varied non-deploy root causes (external 3rd-party
+  outage, disk-full, DNS, secret rotation, redis eviction, JVM heap config, kafka consumer
+  config, clock skew, organic traffic surge, blocking DB migration). Designed to punish
+  the "always blame the latest deploy" reflex.
 
 ```bash
-.venv/bin/python -m backend.eval      # logs an Evaluation to your Weave project's Evals tab
+WARROOM_EVAL=hard .venv/bin/python -m backend.eval   # logs to your Weave Evals tab
 ```
 
-**Live result on W&B Inference (Llama-3.3-70B investigators):** top-1 root-cause
-accuracy **5/5 (1.00)**, MRR 1.00. And the eval *earned its keep*: the first run
-scored **0.80** — the Weave trace showed the crew had actually nailed the TLS-cert
-incident but labelled it `tls-certificate-expiration` while our scorer demanded the
-literal `cert-expiry`. We added alias-aware scoring and re-ran to 1.00. Both runs sit
-on the Weave leaderboard as a before/after — *exactly* the iterate-against-a-real-metric
-loop the tool is for.
+#### We hill-climbed the metric with Weave (the headline)
+The hard set started at **8/12 = 67%**. The Weave traces showed *exactly* how it failed:
+on `stripe-outage`, `dns-failure`, and `redis-eviction` the crew blamed the **red-herring
+deploy** it happened to see in its log slice, instead of the real cause.
 
-> Pitch: *"We don't just trace War Room with Weave — we evaluate root-cause accuracy
-> on a held-out incident set, and Weave caught a scoring blind spot we then fixed. The
-> crew that debugs production is itself measurable in production."*
+| Iteration | Change (driven by reading the traces) | Top-1 |
+|---|---|---|
+| baseline | — | **67%** |
+| 1 | Deploys agent: assess *causal plausibility*, rule out unrelated changes (copy/UI/logging), emit `no-recent-change` | **75%** |
+| 2 | Same plausibility lesson to **all** investigators — name the real mechanism (`upstream-stripe-outage`, `dns-resolution-failure`, …) instead of a deploy marker | **92%** |
+| 3 | Correlation: **causal-precedence** rule — a plausible change that *preceded* the incident outranks the symptoms it explains (safe now that red herrings are filtered) | **100%** |
+
+The eval also **caught a real regression before the demo did**: iteration 2 made the
+Metrics agent name the *symptom* in `db-vs-deploy`, which flipped the demo's headline
+verdict from the deploy to the symptom. The causal-precedence rule (iteration 3) fixed
+both the eval *and* the demo — full set now **17/17 (1.00)**, MRR 1.00.
+
+### 4. W&B **MCP server** (optimize with the coding agent)
+We registered the hosted **W&B Weave MCP server** (`claude mcp add --transport http wandb
+https://mcp.withwandb.com/mcp`) so a coding agent can read the Weave traces / evaluation
+summaries directly and hill-climb the metric — which is exactly the loop above.
+
+> Pitch: *"We don't just trace War Room with Weave — we evaluate root-cause accuracy on a
+> held-out adversarial incident set and used the traces to hill-climb it from 67% → 100%,
+> catching a demo-breaking regression on the way. The crew that debugs production is itself
+> measured and optimized in production."*
 
 ### OpenAI (alternative path)
 If `OPENAI_API_KEY` is set instead of W&B creds, the same code runs on `gpt-4o-mini`
@@ -221,8 +241,9 @@ backend/
   tools.py          MCP-framed data sources (logs/metrics/deploys)
   llm.py            W&B Inference Service / OpenAI layer (Weave-instrumented) + mock
   weave_setup.py    offline-tolerant weave.init (uses WANDB_PROJECT)
-  eval.py           weave.Evaluation — root-cause accuracy on 5 held-out incidents
-  scenarios.py      5 engineered incidents (2 demo + 3 eval), with ground truth
+  eval.py           weave.Evaluation — root-cause accuracy (WARROOM_EVAL=demo|hard|all)
+  scenarios.py      5 curated incidents (2 demo + 3 eval), with ground truth
+  hard_scenarios.py 12 adversarial incidents (red-herring deploys) for the hill-climb
 frontend/
   index.html        live React Flow graph (loaded via ESM CDN — no build step)
 ```

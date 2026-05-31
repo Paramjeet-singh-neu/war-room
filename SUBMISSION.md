@@ -50,10 +50,12 @@ is downstream of the change).
   - **A2A-style message passing** — the Commander dispatches a structured `Task` to each
     investigator and they return a structured `Finding`; no free-form prose crosses the
     boundary (locked schema in `backend/schema.py`).
-  - **MCP-framed data sources** — each production data source (logs / metrics / deploys)
-    is exposed as an MCP-style tool (`backend/tools.py`); each investigator calls **only
-    its own** source, and the Commander never sees raw data — only structured findings
-    (clean separation of concerns).
+  - **MCP-framed data sources + real live data** — each source is an MCP-style tool
+    (`backend/tools.py`); each investigator calls **only its own** source; the Commander
+    never sees raw data, only structured findings. Not just canned: a **Live Incident**
+    mode takes pasted real logs/metrics and `fetch_github_changes` pulls **real commits
+    from the live GitHub API** as the Deploys slice. Two real hosted MCP servers are
+    registered in the harness (W&B Weave MCP + GitHub MCP, both connected).
 - **Real async parallelism** — the three investigators run under `asyncio.gather`
   (`backend/orchestrator.py`); verified all three start at t=0 and total runtime equals
   the slowest agent, not the sum. Sequential execution would defeat the whole point.
@@ -95,9 +97,11 @@ is downstream of the change).
    top-1 accuracy / found-in-ranking / rank / MRR. **We used the Weave traces to
    hill-climb the metric 67% → 100%** (sharpen investigator plausibility prompts, then a
    causal-precedence correlation rule) — and the eval *caught a demo-breaking regression*
-   on the way. Every run logged to the Evals leaderboard.
-4. **W&B Weave MCP server** — registered the hosted MCP server so a coding agent can
-   query the traces / evaluation summaries directly and drive the optimization loop.
+   on the way. Every run logged to the Evals leaderboard. Plus **online self-eval**: an
+   LLM-judge (`@weave.op`) scores every *live* incident's verdict support (no ground
+   truth), traced per-incident — the basis for a Weave Monitor.
+4. **W&B Weave MCP server** (+ GitHub MCP) — registered the hosted MCP servers so a
+   coding agent can query traces / eval summaries and drive the optimization loop.
 
 *(If you used any other sponsor's tool, list it here. We did not use other sponsors.)*
 

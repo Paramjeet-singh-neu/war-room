@@ -61,12 +61,19 @@ the Commander dispatches a structured [`Task`](backend/schema.py) (source + inci
 window + instruction) and each investigator replies with a structured
 [`Finding`](backend/schema.py). No free-form prose crosses the boundary.
 
-### MCP-framed data sources
+### MCP-framed data sources (incl. one real, live source)
 Each production data source is exposed as an **MCP**-style tool/resource in
 [`backend/tools.py`](backend/tools.py): `fetch_logs`, `fetch_metrics`, `fetch_deploys`,
 each taking the incident window and returning a raw slice. An investigator calls
-**only its own** source's tool — clean separation of concerns. In a full deployment
-these are three MCP servers; here they're in-process tools over the same contract.
+**only its own** source's tool — clean separation of concerns.
+
+It isn't just canned data: the **Live Incident** scenario lets you paste *real* logs /
+metrics, and `fetch_github_changes` pulls **real recent commits from the live GitHub
+API** (`owner/name`) as the Deploys agent's slice — so the crew investigates genuinely
+unseen data (and the online judge correctly flags weakly-supported verdicts on it). We
+also register two real **hosted MCP servers** in the dev harness via `claude mcp add`:
+the **W&B Weave MCP** (drive optimization from traces) and the **GitHub MCP** — both
+`✓ Connected`.
 
 ### Real async parallelism (non-negotiable)
 The three investigators run with `asyncio.gather` in
@@ -183,6 +190,14 @@ Metrics agent name the *symptom* in `db-vs-deploy`, which flipped the demo's hea
 verdict from the deploy to the symptom. The causal-precedence rule (iteration 3) fixed
 both the eval *and* the demo — full set now **17/17 (1.00)**, MRR 1.00.
 
+#### Online self-evaluation (production scoring, no ground truth)
+Offline evals need labels; production doesn't have them. So **every live incident is
+scored online** by an LLM-judge (`judge_incident_quality`, a `@weave.op`) that rates how
+well-supported the verdict is (0–1) — traced per-incident in Weave and shown live in the
+UI (e.g. on real GitHub data it scored a tentative verdict **30% ⚠**, correctly flagging
+weak evidence instead of overclaiming). This is the basis for a W&B **Weave Monitor**
+(UI-configured) using the same judge to track verdict quality over live traffic.
+
 ### 4. W&B **MCP server** (optimize with the coding agent)
 We registered the hosted **W&B Weave MCP server** (`claude mcp add --transport http wandb
 https://mcp.withwandb.com/mcp`) so a coding agent can read the Weave traces / evaluation
@@ -256,7 +271,7 @@ backend/
   agents.py         the three investigators + the spawned adjudicator specialist
   correlation.py    programmatic hypothesis ranking (convergence + alignment)
   schema.py         locked Task / Finding / Hypothesis models
-  tools.py          MCP-framed data sources (logs/metrics/deploys)
+  tools.py          MCP-framed data sources + fetch_github_changes (live GitHub)
   llm.py            W&B Inference Service / OpenAI layer (Weave-instrumented) + mock
   weave_setup.py    offline-tolerant weave.init (uses WANDB_PROJECT)
   eval.py           weave.Evaluation — root-cause accuracy (WARROOM_EVAL=demo|hard|all)

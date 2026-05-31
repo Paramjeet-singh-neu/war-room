@@ -250,7 +250,23 @@ note: nothing deployed inside the incident window.
     ],
 }
 
-SCENARIOS = {s["id"]: s for s in (PAYMENTS, DB_VS_DEPLOY)}
+# A blank "bring your own incident" scenario: paste real logs/metrics/deploys (and
+# optionally point the Deploys agent at a real GitHub repo) and the live crew
+# investigates genuinely unseen data. Proves it isn't just canned demos.
+CUSTOM = {
+    "id": "custom",
+    "title": "Live Incident (paste your own / GitHub)",
+    "incident_start": "2024-01-01T00:00:00Z",  # override via request; default is neutral
+    "window_start": "2000-01-01T00:00:00Z",
+    "window_end": "2100-01-01T00:00:00Z",
+    "alert": "Custom incident — investigators reason over whatever you paste in.",
+    "logs": "",
+    "metrics": "",
+    "deploys": "",
+    "mock_findings": [],
+}
+
+SCENARIOS = {s["id"]: s for s in (PAYMENTS, DB_VS_DEPLOY, CUSTOM)}
 DEFAULT_SCENARIO = "payments"
 
 # Held-out evaluation set (all five, with ground-truth root causes).

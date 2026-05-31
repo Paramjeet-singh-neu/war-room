@@ -20,7 +20,7 @@ import weave
 
 from backend.agents import investigate, investigate_specialist
 from backend.correlation import detect_disagreement, rank_hypotheses
-from backend.llm import chat_text, commander_model, have_llm
+from backend.llm import _extract_json, chat_text, commander_model, have_llm
 from backend.schema import CommanderReport, Finding, Hypothesis, Source
 from backend.tools import IncidentDataSource
 
@@ -125,6 +125,40 @@ async def commander_synthesize(
     return narrative, adjudication
 
 
+_QUALITY_BAND = {"low": 0.4, "medium": 0.6, "high": 0.82, "critical": 0.92}
+
+
+@weave.op()
+async def judge_incident_quality(top_cause: str, top_confidence: str, findings_brief: str) -> dict:
+    """Online LLM-as-judge: rate how well-supported the verdict is (no ground truth).
+
+    Runs on every live incident, traced per-incident in Weave — a production quality
+    signal you can monitor over time (and the basis for a UI Weave Monitor). The crew
+    that debugs production also grades its own calls in production.
+    """
+    if not have_llm():
+        s = _QUALITY_BAND.get(top_confidence, 0.7)
+        return {"support_score": s, "well_supported": s >= 0.6, "rationale": "heuristic (no judge LLM)"}
+    system = (
+        "You are an impartial incident-review judge. Given a root-cause verdict and the "
+        "structured findings it was based on, rate how well-supported the verdict is. "
+        "Consider: do the sources converge, do timestamps line up, is the cause plausible "
+        "and not a red-herring? Respond ONLY with JSON: "
+        '{"support_score": <0..1>, "well_supported": <true|false>, "rationale": "<one sentence>"}'
+    )
+    user = f"Verdict: {top_cause} (confidence {top_confidence}).\nFindings:\n{findings_brief}"
+    try:
+        data = _extract_json(await chat_text(commander_model(), system, user))
+        return {
+            "support_score": float(data.get("support_score", 0.0)),
+            "well_supported": bool(data.get("well_supported", False)),
+            "rationale": str(data.get("rationale", ""))[:200],
+        }
+    except Exception:  # noqa: BLE001 — never let scoring break the run
+        s = _QUALITY_BAND.get(top_confidence, 0.7)
+        return {"support_score": s, "well_supported": s >= 0.6, "rationale": "judge unavailable; heuristic"}
+
+
 @weave.op()
 async def run_incident(scenario: dict, emit: Emit) -> CommanderReport:
     """Dispatch the alert to all investigators in parallel and synthesize a report."""
@@ -201,5 +235,11 @@ async def run_incident(scenario: dict, emit: Emit) -> CommanderReport:
         adjudication=adjudication,
     )
     await emit({"type": "hypothesis", "report": report.model_dump()})
+
+    # Online self-evaluation: an LLM judge grades the verdict's support in production.
+    brief = "; ".join(f"[{f.source}->{f.points_to}] {f.finding[:80]}" for f in findings)
+    quality = await judge_incident_quality(ranked[0].cause, ranked[0].confidence, brief)
+    await emit({"type": "quality", **quality})
+
     await emit({"type": "done"})
     return report

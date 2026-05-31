@@ -12,7 +12,39 @@ payload, but the boundary and contract are identical.
 """
 from __future__ import annotations
 
+import json
+import urllib.request
+
 import weave
+
+
+@weave.op()
+def fetch_github_changes(repo: str, limit: int = 15) -> str:
+    """MCP-style tool: pull REAL recent commits/merges from a public GitHub repo.
+
+    This makes the Deploys investigator work on genuine, unseen change history
+    instead of a canned slice. Uses the public GitHub API (no auth needed for
+    public repos). `repo` is "owner/name". Fails soft with a readable message.
+    """
+    url = f"https://api.github.com/repos/{repo}/commits?per_page={limit}"
+    req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json",
+                                               "User-Agent": "war-room"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            commits = json.load(r)
+    except Exception as e:  # noqa: BLE001
+        return f"(could not fetch GitHub changes for {repo}: {type(e).__name__}: {e})"
+    if not isinstance(commits, list) or not commits:
+        return f"(no commits found for {repo})"
+    lines = [f"recent changes (REAL, from github.com/{repo}), most recent first:"]
+    for c in commits:
+        sha = c.get("sha", "")[:7]
+        commit = c.get("commit", {})
+        when = commit.get("author", {}).get("date", "?")
+        author = commit.get("author", {}).get("name", "?")
+        msg = (commit.get("message", "") or "").splitlines()[0][:100]
+        lines.append(f"- {sha}  {when}  author={author}  \"{msg}\"")
+    return "\n".join(lines)
 
 
 class IncidentDataSource:

@@ -122,6 +122,10 @@ async def investigate(source: Source, scenario: dict, datasource: IncidentDataSo
     """Run one investigator end-to-end: task -> MCP fetch -> finding."""
     task = _build_task(source, scenario)
     raw = datasource.fetch(source, task.window_start, task.window_end)  # MCP tool call
+    if not raw or not raw.strip():  # custom incident with this source left blank
+        return Finding(source=source, finding=f"No {source} data provided.",
+                       timestamp=scenario["incident_start"], severity="low",
+                       confidence=0.0, points_to="no-data")
     if have_llm():
         return await _llm_finding(source, scenario, raw)
     return _mock_finding(source, scenario)

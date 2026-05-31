@@ -24,6 +24,7 @@ from pydantic import BaseModel  # noqa: E402
 from backend.llm import commander_model, have_llm, investigator_model, provider  # noqa: E402
 from backend.orchestrator import run_incident  # noqa: E402
 from backend.scenarios import DEFAULT_SCENARIO, SCENARIOS  # noqa: E402
+from backend.tools import fetch_github_changes  # noqa: E402
 from backend.weave_setup import init_weave  # noqa: E402
 
 TRACED = init_weave()  # instrument BEFORE any agent logic runs
@@ -38,6 +39,8 @@ class InvestigateRequest(BaseModel):
     logs: str | None = None
     metrics: str | None = None
     deploys: str | None = None
+    incident_start: str | None = None  # ISO-8601; used for timestamp alignment
+    github_repo: str | None = None  # "owner/name" — pull REAL deploys from live GitHub
 
 
 @app.get("/")
@@ -76,6 +79,10 @@ async def investigate(req: InvestigateRequest):
         val = getattr(req, field)
         if val:
             scenario[field] = val
+    if req.incident_start:
+        scenario["incident_start"] = req.incident_start
+    if req.github_repo:  # real, unseen deploy history from the live GitHub API
+        scenario["deploys"] = fetch_github_changes(req.github_repo)
 
     queue: asyncio.Queue = asyncio.Queue()
     SENTINEL = object()

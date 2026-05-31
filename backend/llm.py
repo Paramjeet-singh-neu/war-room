@@ -29,7 +29,7 @@ WANDB_INFERENCE_BASE = "https://api.inference.wandb.ai/v1"
 
 # Defaults per provider; any can be overridden via env.
 _WANDB_INVESTIGATOR = "meta-llama/Llama-3.3-70B-Instruct"
-_WANDB_COMMANDER = "deepseek-ai/DeepSeek-R1-0528"
+_WANDB_COMMANDER = "deepseek-ai/DeepSeek-V3.1"  # reasoning model for synthesis/adjudication
 
 _client: AsyncOpenAI | None = None
 

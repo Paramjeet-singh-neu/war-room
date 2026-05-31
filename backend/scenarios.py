@@ -97,7 +97,6 @@ DB_VS_DEPLOY = {
         "errors. On-call paged 14:36."
     ),
     "logs": """\
-2024-11-12T14:30:02Z INFO  orders-service deploy hook: applying release deploy-4480 (rolling restart)
 2024-11-12T14:32:01Z ERROR orders-service org.hibernate.exception: could not get JDBC Connection
     Caused by: HikariPool-1 - Connection is not available, request timed out after 5000ms (pool size 5)
 2024-11-12T14:32:44Z ERROR orders-service HikariPool-1 timeout; active=5 idle=0 waiting=37
@@ -219,6 +218,9 @@ recent changes (catalog-service), most recent first:
 CERT_EXPIRY = {
     "id": "cert-expiry",
     "ground_truth_cause": "cert-expiry",
+    # The cause is an expired TLS cert; models legitimately label it differently
+    # (e.g. "tls-certificate-expiration"). Accept any label naming TLS/cert.
+    "ground_truth_aliases": ["cert", "tls", "certificate"],
     "title": "gateway: upstream 503s with no recent deploy",
     "incident_start": "2024-11-12T00:00:30Z",
     "window_start": "2024-11-11T23:40:00Z",

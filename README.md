@@ -109,9 +109,11 @@ All four agents run on **W&B-hosted open models** via the OpenAI-compatible endp
 route by job:
 - **Investigators** (Logs / Metrics / Deploys) → `meta-llama/Llama-3.3-70B-Instruct`
   — fast, capable, great for the parallel structured-output fan-out.
-- **Incident Commander** → `deepseek-ai/DeepSeek-R1-0528` — a reasoning model for the
-  synthesis/adjudication step. *We route the hard reasoning to R1 and the parallel
-  investigation to Llama.* Both models report usage via the required `team/project`.
+- **Incident Commander** → `deepseek-ai/DeepSeek-V3.1` — a reasoning model for the
+  synthesis/adjudication step. *We route the hard reasoning to DeepSeek and the
+  parallel investigation to Llama.* Both models report usage via the required
+  `team/project`. (Override either with `WARROOM_INVESTIGATOR_MODEL` /
+  `WARROOM_COMMANDER_MODEL`.)
 
 ### 2. W&B **Weave** (tracing) — *"debugging the debugger"*
 We use Weave to **trace and debug a crew whose entire job is debugging production
@@ -141,9 +143,17 @@ a real metric and compare runs on a Weave leaderboard.
 .venv/bin/python -m backend.eval      # logs an Evaluation to your Weave project's Evals tab
 ```
 
+**Live result on W&B Inference (Llama-3.3-70B investigators):** top-1 root-cause
+accuracy **5/5 (1.00)**, MRR 1.00. And the eval *earned its keep*: the first run
+scored **0.80** — the Weave trace showed the crew had actually nailed the TLS-cert
+incident but labelled it `tls-certificate-expiration` while our scorer demanded the
+literal `cert-expiry`. We added alias-aware scoring and re-ran to 1.00. Both runs sit
+on the Weave leaderboard as a before/after — *exactly* the iterate-against-a-real-metric
+loop the tool is for.
+
 > Pitch: *"We don't just trace War Room with Weave — we evaluate root-cause accuracy
-> on a held-out incident set. The crew that debugs production is itself measurable in
-> production."*
+> on a held-out incident set, and Weave caught a scoring blind spot we then fixed. The
+> crew that debugs production is itself measurable in production."*
 
 ### OpenAI (alternative path)
 If `OPENAI_API_KEY` is set instead of W&B creds, the same code runs on `gpt-4o-mini`

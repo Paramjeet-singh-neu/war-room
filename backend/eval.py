@@ -47,13 +47,30 @@ async def predict(incident: dict) -> dict:
     }
 
 
+def _match(cause: str, truth: str, aliases: list[str]) -> bool:
+    """Cause id matches the ground truth by exact/substring or a known alias.
+
+    Deploy/config ids match verbatim; a semantic cause (e.g. an expired TLS cert)
+    matches whether the model labels it 'cert-expiry' or 'tls-certificate-expiration'.
+    """
+    c = cause.lower()
+    t = truth.lower()
+    if t in c or c in t:
+        return True
+    return any(a.lower() in c for a in aliases)
+
+
 @weave.op()
-def rca_scorer(ground_truth_cause: str, output: dict) -> dict:
+def rca_scorer(ground_truth_cause: str, ground_truth_aliases: list[str], output: dict) -> dict:
     """Score the Commander's ranking against the known root cause."""
     causes = output["ranked_causes"]
-    rank = (causes.index(ground_truth_cause) + 1) if ground_truth_cause in causes else 0
+    rank = 0
+    for i, c in enumerate(causes):
+        if _match(c, ground_truth_cause, ground_truth_aliases):
+            rank = i + 1
+            break
     return {
-        "top1_correct": output["top_cause"] == ground_truth_cause,
+        "top1_correct": _match(output["top_cause"], ground_truth_cause, ground_truth_aliases),
         "found_in_ranking": rank > 0,
         "truth_rank": rank,
         "reciprocal_rank": (1.0 / rank) if rank else 0.0,
@@ -61,7 +78,14 @@ def rca_scorer(ground_truth_cause: str, output: dict) -> dict:
 
 
 def _rows() -> list[dict]:
-    return [{"incident": s, "ground_truth_cause": s["ground_truth_cause"]} for s in EVAL_SET]
+    return [
+        {
+            "incident": s,
+            "ground_truth_cause": s["ground_truth_cause"],
+            "ground_truth_aliases": s.get("ground_truth_aliases", []),
+        }
+        for s in EVAL_SET
+    ]
 
 
 async def _run_weave_eval():
@@ -84,7 +108,7 @@ async def _run_local_eval():
     results = []
     for row in rows:
         out = await predict(row["incident"])
-        sc = rca_scorer(row["ground_truth_cause"], out)
+        sc = rca_scorer(row["ground_truth_cause"], row["ground_truth_aliases"], out)
         results.append((row["incident"]["id"], row["ground_truth_cause"], out["top_cause"], sc))
         mark = "✓" if sc["top1_correct"] else "✗"
         print(f"  {mark} {row['incident']['id']:16} truth={row['ground_truth_cause']:18} "

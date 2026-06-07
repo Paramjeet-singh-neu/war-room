@@ -4,7 +4,7 @@ Provider selection (lazy, so .env is loaded first):
   * WANDB_API_KEY + WANDB_PROJECT  -> W&B Inference Service (OpenAI-compatible).
         Every call (a) runs on a W&B-hosted open model and (b) is Weave-traced.
         Investigators: meta-llama/Llama-3.3-70B-Instruct  (fast parallel fan-out)
-        Commander:     deepseek-ai/DeepSeek-R1-0528        (reasoning-heavy synthesis)
+        Commander:     deepseek-ai/DeepSeek-V3.1           (reasoning-heavy synthesis)
   * OPENAI_API_KEY                 -> OpenAI (gpt-4o-mini / gpt-4o).
   * neither                        -> mock mode (curated findings).
 
@@ -26,6 +26,8 @@ import weave
 from openai import AsyncOpenAI
 
 WANDB_INFERENCE_BASE = "https://api.inference.wandb.ai/v1"
+_DEFAULT_TIMEOUT_S = 45.0
+_DEFAULT_RETRIES = 2
 
 # Defaults per provider; any can be overridden via env.
 _WANDB_INVESTIGATOR = "meta-llama/Llama-3.3-70B-Instruct"
@@ -72,14 +74,17 @@ def commander_model() -> str:
 def _get_client() -> AsyncOpenAI:
     global _client
     if _client is None:
+        timeout = float(os.environ.get("WARROOM_LLM_TIMEOUT", _DEFAULT_TIMEOUT_S))
         if provider() == "wandb":
             _client = AsyncOpenAI(
                 base_url=WANDB_INFERENCE_BASE,
                 api_key=os.environ["WANDB_API_KEY"],
                 project=os.environ["WANDB_PROJECT"],  # required for usage tracking
+                timeout=timeout,
+                max_retries=0,  # we do explicit, visible retries in _create()
             )
         else:
-            _client = AsyncOpenAI()  # uses OPENAI_API_KEY
+            _client = AsyncOpenAI(timeout=timeout, max_retries=0)  # uses OPENAI_API_KEY
     return _client
 
 
@@ -107,10 +112,11 @@ def _extract_json(text: str) -> dict:
     return json.loads(m.group(0))
 
 
-async def _create(model: str, system: str, user: str, retries: int = 5):
+async def _create(model: str, system: str, user: str, retries: int | None = None):
     client = _get_client()
     last: Exception | None = None
-    for attempt in range(retries):
+    attempts = retries if retries is not None else int(os.environ.get("WARROOM_LLM_RETRIES", _DEFAULT_RETRIES))
+    for attempt in range(attempts):
         try:
             return await client.chat.completions.create(
                 model=model,
@@ -123,7 +129,8 @@ async def _create(model: str, system: str, user: str, retries: int = 5):
         except Exception as e:  # noqa: BLE001 — retry transient errors incl. 429
             last = e
             wait = (2.0 if _is_rate_limit(e) else 0.8) * (2**attempt) + random.uniform(0, 0.4)
-            if attempt < retries - 1:
+            print(f"[llm] {model} attempt {attempt + 1}/{attempts} failed: {type(e).__name__}: {e}")
+            if attempt < attempts - 1:
                 await asyncio.sleep(min(wait, 20))
     raise last  # type: ignore[misc]
 

@@ -1,6 +1,6 @@
-# War Room — AGI House submission (copy-paste into app.agihouse.org)
+# War Room — AGI House submission template
 
-> Fill the `[YOU FILL]` bits, paste the rest. Everything below is ready to go.
+> Fill in the team, social, repo, and demo-video fields before submitting.
 
 ---
 
@@ -8,18 +8,18 @@
 **War Room**   *(or pick your own — must be unique on the platform)*
 
 ## Team members
-- [YOU FILL] Name — singh.para@northeastern.edu — X: [YOU FILL] / LinkedIn: [YOU FILL]
+- Name — email — X / LinkedIn
 - *(add teammates if any: name, email, socials)*
 
 ## Social handles (for tagging)
-- X: [YOU FILL]
-- LinkedIn: [YOU FILL]
+- X:
+- LinkedIn:
 
 ## Repo
-https://github.com/Paramjeet-singh-neu/war-room  (public)
+https://github.com/Paramjeet-singh-neu/war-room
 
 ## Demo video
-[YOU FILL — under 2 min screen recording. Suggested beats below.]
+Under 2 min screen recording. Suggested beats below.
 
 ---
 
@@ -100,8 +100,8 @@ is downstream of the change).
    on the way. Every run logged to the Evals leaderboard. Plus **online self-eval**: an
    LLM-judge (`@weave.op`) scores every *live* incident's verdict support (no ground
    truth), traced per-incident — the basis for a Weave Monitor.
-4. **W&B Weave MCP server** (+ GitHub MCP) — registered the hosted MCP servers so a
-   coding agent can query traces / eval summaries and drive the optimization loop.
+4. **W&B Weave MCP server** (+ GitHub MCP) — can be registered with a coding agent so it
+   can query traces / eval summaries and drive the optimization loop.
 
 *(If you used any other sponsor's tool, list it here. We did not use other sponsors.)*
 

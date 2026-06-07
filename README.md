@@ -9,8 +9,6 @@
 
 Mess in (raw logs + metrics + deploys) → **root cause out**.
 
-![War Room graph](docs/demo.png)
-
 ---
 
 ## What it does (2 sentences)
@@ -70,10 +68,7 @@ each taking the incident window and returning a raw slice. An investigator calls
 It isn't just canned data: the **Live Incident** scenario lets you paste *real* logs /
 metrics, and `fetch_github_changes` pulls **real recent commits from the live GitHub
 API** (`owner/name`) as the Deploys agent's slice — so the crew investigates genuinely
-unseen data (and the online judge correctly flags weakly-supported verdicts on it). We
-also register two real **hosted MCP servers** in the dev harness via `claude mcp add`:
-the **W&B Weave MCP** (drive optimization from traces) and the **GitHub MCP** — both
-`✓ Connected`.
+unseen data (and the online judge correctly flags weakly-supported verdicts on it).
 
 ### Real async parallelism (non-negotiable)
 The three investigators run with `asyncio.gather` in
@@ -96,8 +91,6 @@ contest, spawns the adjudicator (a **5th node that appears live in the graph**),
 confirms the pool exhaustion is downstream of the deploy's `HikariCP 20→5` change — and
 the verdict resolves decisively to `deploy-4480`. The whole dynamic tree is Weave-traced.
 Verified reliable: db-vs-deploy adjudicates 6/6, payments stays single-round 4/4.
-
-![Dynamic second round — the spawned Adjudicator](docs/dynamic.png)
 
 ### Programmatic correlation (not text concatenation)
 [`backend/correlation.py`](backend/correlation.py) ranks candidate causes purely from
@@ -199,9 +192,9 @@ weak evidence instead of overclaiming). This is the basis for a W&B **Weave Moni
 (UI-configured) using the same judge to track verdict quality over live traffic.
 
 ### 4. W&B **MCP server** (optimize with the coding agent)
-We registered the hosted **W&B Weave MCP server** (`claude mcp add --transport http wandb
-https://mcp.withwandb.com/mcp`) so a coding agent can read the Weave traces / evaluation
-summaries directly and hill-climb the metric — which is exactly the loop above.
+The hosted **W&B Weave MCP server** can be registered with a coding agent so it can read
+Weave traces / evaluation summaries directly and hill-climb the metric — which is exactly
+the loop above.
 
 > Pitch: *"We don't just trace War Room with Weave — we evaluate root-cause accuracy on a
 > held-out adversarial incident set and used the traces to hill-climb it from 67% → 100%,

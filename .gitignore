@@ -1,7 +1,23 @@
+# Python
 .venv/
+venv/
 __pycache__/
-*.pyc
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local environment and secrets
 .env
+.env.*
+!.env.example
+
+# W&B / local runtime output
 .wandb/
 wandb/
+*.log
+
+# OS / editor noise
 .DS_Store
+.vscode/
